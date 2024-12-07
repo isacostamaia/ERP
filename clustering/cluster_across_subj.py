@@ -9,6 +9,12 @@ import numpy as np
 import pandas as pd
 from moabb.datasets import BI2013a
 
+from sklearn.svm import SVC
+from sklearn.model_selection import cross_val_score, StratifiedKFold, cross_val_predict
+from sklearn.metrics import roc_curve, auc
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
+
 from preprocessing.power import FRMS
 from preprocessing.data_processing import get_clean_epochs, Lagger
 from preprocessing.data_processing_iterative import AltFilters
@@ -194,6 +200,9 @@ def read_pkl_files(folder = os.path.join("..", "data", "window_mean_data"), db_n
     df = pd.DataFrame(dict_subj)
     return df
 
+def plot_roc_subj():
+    pass
+
 
 if __name__ == "__main__":
     # stuff only to run when not called via 'import' here
@@ -201,8 +210,40 @@ if __name__ == "__main__":
     #extract_peaks()
     df = read_pkl_files(folder= os.path.join("..", "data", "window_mean_data"))
 
+    sessions = df.Session.unique()
+    df_session = df[df["Session"]==sessions[0]]
+    num_epochs_session = len(df_session.Epoch.unique())
+    df_session_epoch_idx = df_session.astype(str).groupby(by="Epoch").agg(lambda x: ','.join(x.unique()))
+    num_epochs_ntg, num_epochs_tg = df_session_epoch_idx["Target"].value_counts()
 
+    # Flatten the 'ERP' n_channelsx1 arrays into n_channels-element vectors
+    df_session['ERP_flat'] = df_session['ERP'].apply(lambda x: np.array(x).flatten())
 
+    # Stack the flattened ERP into a feature matrix
+    X = np.vstack(df_session['ERP_flat'].values)  # Shape: (n_samples, 16)
+    y = df_session['Target'].values  # Class labels
 
+    # Normalize the feature matrix
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
+    # Set up the SVM classifier
+    svm = SVC(kernel='linear', probability=True, random_state=42, class_weight='balanced')
+
+    # cross-validation and AUC
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    y_proba = cross_val_predict(svm, X_scaled, y, cv=cv, method='predict_proba')[:, 1]
+    fpr, tpr, thresholds = roc_curve(y, y_proba)
+    roc_auc = auc(fpr, tpr)
+
+    # Plot AUC curve
+    plt.figure(figsize=(8, 6))
+    plt.plot(fpr, tpr, color='blue', lw=2, label=f"AUC = {roc_auc:.2f}")
+    plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title("SVM ROC Curve")
+    plt.legend(loc="lower right")
+    plt.grid()
+    plt.show()
 # %%
