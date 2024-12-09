@@ -10,7 +10,7 @@ import pandas as pd
 from moabb.datasets import BI2013a
 
 from sklearn.svm import SVC
-from sklearn.model_selection import cross_val_score, StratifiedKFold, cross_val_predict
+from sklearn.model_selection import cross_val_score, StratifiedKFold, cross_val_predict, train_test_split
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
@@ -18,7 +18,6 @@ import matplotlib.pyplot as plt
 from preprocessing.power import FRMS
 from preprocessing.data_processing import get_clean_epochs, Lagger
 from preprocessing.data_processing_iterative import AltFilters
-
 
 
 def extract_peaks(dataset=BI2013a(), db_name = "BI2013a"):
@@ -178,20 +177,21 @@ def extract_window_mean(dataset=BI2013a(), db_name = "BI2013a"):
             pickle.dump(XY, f)
 
 
-
-
-def read_pkl_files(folder = os.path.join("..", "data", "window_mean_data"), db_name = '*'):
+def read_pkl_files(folder = os.path.join("..", "data", "window_mean_data"), db_name = '*', subject = "*"):
     """
     Reads .pkl files in folder and returns df with peak data 
     for db_name directory 
         Params: 
-            db_name (e.g. db_name = 'BI2013a' or '*' for all db directories in folder)
-        Returns: df_peaks 
+            db_name: (e.g. db_name = 'BI2013a' or '*' for all db directories in folder)
+            subject: string number of subject file inside folder/db_name. subject =  "*" if all subjects are desired.
+        Returns: df 
     """
     path = os.path.join(os.path.dirname(__file__), folder)
-    print(path)
-    # List files inside all directories in folder
-    pkls_all_subj = [d for d in glob.glob(os.path.join(path, db_name))]
+    if subject != "*":
+        subject = "XY_" + db_name + "_subj" + subject + ".pkl"
+    # List desired files inside desired db folder
+    pkls_all_subj = [d for d in glob.glob(os.path.join(path, db_name, subject))]
+    print("Reading the files: \n", pkls_all_subj)
     dict_subj = {}
     for d in pkls_all_subj:
         #read pickle files as df and concatenate to dict_subj
@@ -200,41 +200,69 @@ def read_pkl_files(folder = os.path.join("..", "data", "window_mean_data"), db_n
     df = pd.DataFrame(dict_subj)
     return df
 
-def plot_roc_subj():
-    pass
 
+def get_XY_data(subject = "1", db_name = 'BI2013a', session = "0"):
+    """
+        Reads pickle files and returns X and y data
+        Params:
+            db_name: (e.g. db_name = 'BI2013a' or '*' for all db directories in folder)
+            subject: string number of subject file inside folder/db_name. subject =  "*" if all subjects are desired.
+        Returns:
+            X, y
+    """
 
-if __name__ == "__main__":
-    # stuff only to run when not called via 'import' here
-    #main()
-    #extract_peaks()
-    df = read_pkl_files(folder= os.path.join("..", "data", "window_mean_data"))
+    folder = os.path.join("..", "data", "window_mean_data")
+    df = read_pkl_files(folder = folder, db_name = db_name, subject = subject)
 
-    sessions = df.Session.unique()
-    df_session = df[df["Session"]==sessions[0]]
-    num_epochs_session = len(df_session.Epoch.unique())
-    df_session_epoch_idx = df_session.astype(str).groupby(by="Epoch").agg(lambda x: ','.join(x.unique()))
-    num_epochs_ntg, num_epochs_tg = df_session_epoch_idx["Target"].value_counts()
-
+    df_session = df[df["Session"] == session]
     # Flatten the 'ERP' n_channelsx1 arrays into n_channels-element vectors
-    df_session['ERP_flat'] = df_session['ERP'].apply(lambda x: np.array(x).flatten())
+    df_session['ERP'] = df_session['ERP'].apply(lambda x: np.array(x).flatten())
 
+    df_agg_epochs = df_session.groupby(by="Epoch").agg({
+        "Session": lambda x: x.unique()[0] if len(x.unique()) == 1 else ValueError("Multiple sessions found"),
+        "ERP": lambda x: np.vstack(x.to_list()),  # Ensure values can be stacked
+        "Timeidx": lambda x: list(x.unique()),    # Return unique values as a list
+        "Subject": lambda x: list(x.unique())[0] if len(x.unique()) == 1 else ValueError("Multiple subjects found"),    # Return unique values as a list
+        "Target": lambda x: list(x.unique())[0]  if len(x.unique()) == 1 else ValueError("Multiple targets in an epoch found")    # Return unique values as a list
+        })
+
+    tg_ntg_counts = df_agg_epochs["Target"].value_counts()
+    num_epochs_ntg, num_epochs_tg = tg_ntg_counts[tg_ntg_counts.index==0]; tg_ntg_counts[tg_ntg_counts.index==1]
+    print("Number of (Target, NonTarget) Epochs in the session: ", num_epochs_tg, num_epochs_ntg)
+    print("Number of Epochs in the session: ", len(df_agg_epochs))
+
+    #Get data features and fit SVM
+    
     # Stack the flattened ERP into a feature matrix
-    X = np.vstack(df_session['ERP_flat'].values)  # Shape: (n_samples, 16)
+    X = np.vstack(df_session['ERP'].values)  # Shape: (n_samples, 16)
     y = df_session['Target'].values  # Class labels
 
     # Normalize the feature matrix
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # Set up the SVM classifier
+    return X_scaled, y
+
+def plot_roc_subj_session(X, y):
+    """
+    Plot ROC curve for SVM model of as subject in a session. Prediction probabilities are
+    the mean of prediction probabilities obtained in cross validation. These mean predictions are
+    used for tracing the ROC curve.
+    """
+
+    # Set up the SVM classifier and try to compensate class imbalance
     svm = SVC(kernel='linear', probability=True, random_state=42, class_weight='balanced')
 
     # cross-validation and AUC
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-    y_proba = cross_val_predict(svm, X_scaled, y, cv=cv, method='predict_proba')[:, 1]
+    y_proba = cross_val_predict(svm, X, y, cv=cv, method='predict_proba')[:, 1]
     fpr, tpr, thresholds = roc_curve(y, y_proba)
+    optimal_idx = np.argmax(tpr - fpr)
+    optimal_threshold = thresholds[optimal_idx]
     roc_auc = auc(fpr, tpr)
+    y_predict = 
+
+
 
     # Plot AUC curve
     plt.figure(figsize=(8, 6))
@@ -242,8 +270,24 @@ if __name__ == "__main__":
     plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
-    plt.title("SVM ROC Curve")
+    plt.title("SVM ROC Curve" + db_name + " subject " + subject + " session " + session)
     plt.legend(loc="lower right")
     plt.grid()
     plt.show()
+
+def acc_on_time(X, y):
+    """
+    Use it for a single subject and session df
+    """
+    #X_train, X_test, y_train, y_test = cross_validation.train_test_split(Data, Target, test_size=0.3, random_state=0, stratify=Target)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=42, stratify=y)
+
+
+
+if __name__ == "__main__":
+    # stuff only to run when not called via 'import' here
+    #main()
+    #extract_peaks()
+
+ #function that recovers data and transoform into normalized X and y
 # %%
