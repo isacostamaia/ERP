@@ -189,7 +189,7 @@ def read_pkl_files(folder = os.path.join("..", "data", "window_mean_data"), db_n
     path = os.path.join(os.path.dirname(__file__), folder)
     if subject != "*":
         subject = "XY_" + db_name + "_subj" + subject + ".pkl"
-    # List desired files inside desired db folder
+    #list desired files inside desired db folder
     pkls_all_subj = [d for d in glob.glob(os.path.join(path, db_name, subject))]
     print("Reading the files: \n", pkls_all_subj)
     dict_subj = {}
@@ -201,93 +201,201 @@ def read_pkl_files(folder = os.path.join("..", "data", "window_mean_data"), db_n
     return df
 
 
-def get_XY_data(subject = "1", db_name = 'BI2013a', session = "0"):
+def get_XY_df(subject = "1", db_name = 'BI2013a', session = "0"):
     """
         Reads pickle files and returns X and y data
         Params:
             db_name: (e.g. db_name = 'BI2013a' or '*' for all db directories in folder)
             subject: string number of subject file inside folder/db_name. subject =  "*" if all subjects are desired.
         Returns:
-            X, y
+            df_session
     """
 
     folder = os.path.join("..", "data", "window_mean_data")
     df = read_pkl_files(folder = folder, db_name = db_name, subject = subject)
 
     df_session = df[df["Session"] == session]
-    # Flatten the 'ERP' n_channelsx1 arrays into n_channels-element vectors
+    #flatten the 'ERP' n_channelsx1 arrays into n_channels-element vectors
     df_session['ERP'] = df_session['ERP'].apply(lambda x: np.array(x).flatten())
+
+    #stack the flattened ERP into a feature matrix
+    X = np.vstack(df_session['ERP'].values)  # Shape: (n_samples, 16)
+    y = df_session['Target'].values  # Class labels
+    
+    #normalize the feature matrix
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    df_session["ERP_scaled"] = pd.Series(list(X_scaled))
+
 
     df_agg_epochs = df_session.groupby(by="Epoch").agg({
         "Session": lambda x: x.unique()[0] if len(x.unique()) == 1 else ValueError("Multiple sessions found"),
         "ERP": lambda x: np.vstack(x.to_list()),  # Ensure values can be stacked
+        "ERP_scaled": lambda x: np.vstack(x.to_list()),  # Ensure values can be stacked
         "Timeidx": lambda x: list(x.unique()),    # Return unique values as a list
         "Subject": lambda x: list(x.unique())[0] if len(x.unique()) == 1 else ValueError("Multiple subjects found"),    # Return unique values as a list
         "Target": lambda x: list(x.unique())[0]  if len(x.unique()) == 1 else ValueError("Multiple targets in an epoch found")    # Return unique values as a list
         })
 
     tg_ntg_counts = df_agg_epochs["Target"].value_counts()
-    num_epochs_ntg, num_epochs_tg = tg_ntg_counts[tg_ntg_counts.index==0]; tg_ntg_counts[tg_ntg_counts.index==1]
+    num_epochs_ntg, num_epochs_tg = tg_ntg_counts[tg_ntg_counts.index==0], tg_ntg_counts[tg_ntg_counts.index==1]
     print("Number of (Target, NonTarget) Epochs in the session: ", num_epochs_tg, num_epochs_ntg)
     print("Number of Epochs in the session: ", len(df_agg_epochs))
 
-    #Get data features and fit SVM
-    
-    # Stack the flattened ERP into a feature matrix
-    X = np.vstack(df_session['ERP'].values)  # Shape: (n_samples, 16)
-    y = df_session['Target'].values  # Class labels
 
-    # Normalize the feature matrix
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    return df_session
 
-    return X_scaled, y
+def plot_roc_subj_session(X, y, db_name = None, subject = None, session = None):
 
-def plot_roc_subj_session(X, y):
     """
     Plot ROC curve for SVM model of as subject in a session. Prediction probabilities are
     the mean of prediction probabilities obtained in cross validation. These mean predictions are
     used for tracing the ROC curve.
     """
 
-    # Set up the SVM classifier and try to compensate class imbalance
+    if db_name and subject and session:
+        title = "SVM ROC Curve " + db_name + " subject " + subject + " session " + session
+    else:
+        title = "SVM ROC Curve"
+
+    #set up the SVM classifier and try to compensate class imbalance
     svm = SVC(kernel='linear', probability=True, random_state=42, class_weight='balanced')
 
-    # cross-validation and AUC
+    #cross-validation and AUC
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     y_proba = cross_val_predict(svm, X, y, cv=cv, method='predict_proba')[:, 1]
     fpr, tpr, thresholds = roc_curve(y, y_proba)
-    optimal_idx = np.argmax(tpr - fpr)
+    optimal_idx = np.argmax(tpr - fpr)  # Maximizing Youden's index  (sensitivity + specificity - 1)
     optimal_threshold = thresholds[optimal_idx]
     roc_auc = auc(fpr, tpr)
-    y_predict = 
 
-
-
-    # Plot AUC curve
+    #plot AUC curve
     plt.figure(figsize=(8, 6))
     plt.plot(fpr, tpr, color='blue', lw=2, label=f"AUC = {roc_auc:.2f}")
     plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
-    plt.title("SVM ROC Curve" + db_name + " subject " + subject + " session " + session)
+    plt.title(title)
     plt.legend(loc="lower right")
     plt.grid()
     plt.show()
 
-def acc_on_time(X, y):
+    return optimal_threshold
+
+def acc_on_time(X, y, optimal_threshold):
     """
+    Fit SVM with all data from a subject and session and plot accuracy on time
     Use it for a single subject and session df
     """
     #X_train, X_test, y_train, y_test = cross_validation.train_test_split(Data, Target, test_size=0.3, random_state=0, stratify=Target)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=42, stratify=y)
 
+    svm = SVC(kernel='linear', probability=True, random_state=42)
+    #train the SVM
+    svm.fit(X_train, y_train)
+    #predict probabilities for the test set
+    y_proba_test = svm.predict_proba(X_test)[:, 1]
+    #compute accuracy
+    acc = accuracy_score(y_test, y_pred_custom)
+
 
 
 if __name__ == "__main__":
     # stuff only to run when not called via 'import' here
-    #main()
     #extract_peaks()
 
- #function that recovers data and transoform into normalized X and y
+
+    db_name = 'BI2013a'
+    subject = "1"
+    session = "0"
+    df_session = get_XY_df(subject = subject , db_name = db_name, session = session)
+    dataset = BI2013a()
+    epochs = get_clean_epochs(dataset, subjects_list = [int(subject)])
+
+    #plot ROC ang get optimal threshold
+    X, y = np.vstack(df_session["ERP_scaled"].values), df_session["Target"].values
+    svm_opt_threshold  = plot_roc_subj_session(X, y, db_name = db_name, subject = subject, session = session)
+    
+    #fit SVM with optimal threshold
+    df_train, df_test, df_y_train, df_y_test = train_test_split(df_session, df_session["Target"], test_size=0.33, random_state=42, stratify=df_session["Target"])
+    X_train, X_test, y_train, y_test = np.vstack(df_train["ERP_scaled"].values), np.vstack(df_test["ERP_scaled"].values), df_y_train.values, df_y_test.values
+    #set up the SVM classifier and try to compensate class imbalance
+    svm = SVC(kernel='linear', probability=True, random_state=42, class_weight='balanced')
+    #Train the SVM
+    svm.fit(X_train, y_train)
+    #predict probabilities for the test set
+    y_proba_test = svm.predict_proba(X_test)[:, 1]
+    #apply the optimal threshold
+    y_pred_custom = (y_proba_test >= svm_opt_threshold).astype(int)
+    #print general accuracy
+    acc = (y_test == y_pred_custom).mean()
+    print("Test set global accuracy: ", acc)
+
+    timeidx_groups = df_test.groupby("Timeidx").indices
+    acc_time = {}
+    for k,v in timeidx_groups.items():
+        pred_timeidx = y_pred_custom[list(v)]
+        label_timeidx = y_test[list(v)]
+        acc_time[k] = (pred_timeidx == label_timeidx).mean()
+    
+    times = [np.mean(list(l)) for l in list(acc_time.keys())]
+    #target and non-target
+    plt.figure(figsize=(8, 6))
+    plt.plot(times, list(acc_time.values()), color='blue', lw=2)
+    plt.xlabel("Time idx")
+    plt.ylabel("Accuracy")
+    plt.title("Accuracy on time for all samples")
+    plt.grid()
+    plt.show()
+
+    #get target and non_target test sample index
+    df_tg = df_test[df_test["Target"]==1]
+    df_ntg = df_test[df_test["Target"]==0]
+
+    tg_timeidx_groups = df_tg.groupby("Timeidx").indices #{(t1,t2): array(sample_idi, ...), ..., (tn-1,tn): array(sample_idj, ...)}
+    ntg_timeidx_groups = df_ntg.groupby("Timeidx").indices #{(t1,t2): array(sample_idi, ...), ..., (tn-1,tn): array(sample_idj, ...)}
+
+    #compute accuracy in timeidx
+    #target
+    acc_time_tg = {}
+    for k,v in tg_timeidx_groups.items():
+        pred_timeidx = y_pred_custom[list(v)]
+        label_timeidx = y_test[list(v)]
+        acc_time_tg[k] = (pred_timeidx == label_timeidx).mean()
+    #non-target
+    acc_time_ntg = {}
+    for k,v in ntg_timeidx_groups.items():
+        pred_timeidx = y_pred_custom[list(v)]
+        label_timeidx = y_test[list(v)]
+        acc_time_ntg[k] = (pred_timeidx == label_timeidx).mean()
+
+    times_tg = [np.mean(list(l)) for l in list(acc_time_tg.keys())]
+    times_ntg = [np.mean(list(l)) for l in list(acc_time_ntg.keys())]
+
+
+    #target
+    plt.figure(figsize=(8, 6))
+    plt.plot(times_tg, list(acc_time_tg.values()), color='blue', lw=2)
+    plt.xlabel("Time idx")
+    plt.ylabel("Accuracy")
+    plt.title("Accuracy on time for target samples")
+    plt.grid()
+    plt.show()
+
+    #non-target
+    plt.figure(figsize=(8, 6))
+    plt.plot(times_ntg, list(acc_time_ntg.values()), color='blue', lw=2)
+    plt.xlabel("Time idx")
+    plt.ylabel("Accuracy")
+    plt.title("Accuracy on time for non-target samples")
+    plt.grid()
+    plt.show()
+
+    
+
+"""     #map the positional indices back to the actual indices in df_tg
+    idx = (list(tg_same_timeidx.values()))[0]
+    idx = df_tg.index[idx]
+    df_tg.loc[idx] """
 # %%
