@@ -11,6 +11,7 @@ from moabb.datasets import BI2013a
 
 from sklearn.svm import SVC
 from sklearn.model_selection import cross_val_score, StratifiedKFold, cross_val_predict, train_test_split
+from sklearn.metrics import accuracy_score
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
@@ -93,10 +94,15 @@ def extract_peaks(dataset=BI2013a(), db_name = "BI2013a"):
             pickle.dump(XY, f)
 
 
-def extract_window_mean(dataset=BI2013a(), db_name = "BI2013a"):
+def extract_window_mean(t_interval = 30, step = 3, dataset=BI2013a(), db_name = "BI2013a"):
     """
-    Extracts peaks data (n_channels x 1) for Target and Non-Target responses
-    and saves them as .pkl files (one for each subject)
+    Extracts sample data (n_channels x 1) for Target and Non-Target responses
+    and saves them as .pkl files (one for each subject). Samples will be the average
+    ERP value within a window of t_interval ms. Samples are created every "step" time steps.
+    Parameters:
+        t_interval: time window duration in ms in which average ERP will be computed
+        step:         Step size for advancing the window
+
     """
     XY = {"ERP":[], "Target":[], "Timeidx":[], "Session":[], "Subject":[], "Epoch":[]}
 
@@ -131,10 +137,8 @@ def extract_window_mean(dataset=BI2013a(), db_name = "BI2013a"):
             #
             # Parameters
             #get number of samples corresponding to ~t_interval ms
-            #t_interval: time window duration in ms
-            t_interval = 30
+
             len_window = int(t_interval*1e-3*sfreq) # Length of the window ~ around t_interval as number of samples
-            step = 3         # Step size for advancing the window
 
             tg_samples = lag_corrected_epochs_tg.get_data()
             ntg_samples = lag_corrected_epochs_ntg.get_data()
@@ -190,8 +194,11 @@ def read_pkl_files(folder = os.path.join("..", "data", "window_mean_data"), db_n
     if subject != "*":
         subject = "XY_" + db_name + "_subj" + subject + ".pkl"
     #list desired files inside desired db folder
-    pkls_all_subj = [d for d in glob.glob(os.path.join(path, db_name, subject))]
+    file_path = os.path.join(path, db_name, subject)
+    pkls_all_subj = [d for d in glob.glob(file_path)]
     print("Reading the files: \n", pkls_all_subj)
+    if not pkls_all_subj:
+        raise ValueError("No files found with the specified arguments.")
     dict_subj = {}
     for d in pkls_all_subj:
         #read pickle files as df and concatenate to dict_subj
@@ -213,7 +220,7 @@ def get_XY_df(subject = "1", db_name = 'BI2013a', session = "0"):
 
     folder = os.path.join("..", "data", "window_mean_data")
     df = read_pkl_files(folder = folder, db_name = db_name, subject = subject)
-
+    
     df_session = df[df["Session"] == session]
     #flatten the 'ERP' n_channelsx1 arrays into n_channels-element vectors
     df_session['ERP'] = df_session['ERP'].apply(lambda x: np.array(x).flatten())
@@ -392,10 +399,28 @@ if __name__ == "__main__":
     plt.grid()
     plt.show()
 
-    
 
 """     #map the positional indices back to the actual indices in df_tg
     idx = (list(tg_same_timeidx.values()))[0]
     idx = df_tg.index[idx]
     df_tg.loc[idx] """
+
+
+""" db_name = 'BI2013a'
+subject = "1"
+session = "0"
+folder = os.path.join("..", "data", "window_mean_data")
+df = read_pkl_files(folder = folder, db_name = db_name, subject = subject)
+
+df_session = df[df["Session"] == session]
+#flatten the 'ERP' n_channelsx1 arrays into n_channels-element vectors
+df_session['ERP'] = df_session['ERP'].apply(lambda x: np.array(x).flatten())
+
+#stack the flattened ERP into a feature matrix
+X = np.vstack(df_session['ERP'].values)  # Shape: (n_samples, 16)
+y = df_session['Target'].values  # Class labels
+
+#normalize the feature matrix
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X) """
 # %%
