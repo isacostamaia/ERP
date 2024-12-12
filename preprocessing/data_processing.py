@@ -1,14 +1,12 @@
 import math
 import copy
-from tabnanny import verbose
+
 import numpy as np
-from scipy.linalg import eigh, pinv
 from scipy.signal import argrelextrema
 import statistics
 import logging
 import mne
 from moabb.paradigms import P300
-import matplotlib.pyplot as plt
 
 
 def get_clean_epochs(dataset, subjects_list=[1], paradigm = P300(), reject_value = 100e-6):

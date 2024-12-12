@@ -10,6 +10,7 @@ from moabb.datasets import BI2013a
 
 from preprocessing.power import FRMS
 from preprocessing.data_processing import get_clean_epochs, Lagger
+from preprocessing.data_processing_iterative import AltFilters
 
 
 def dash_peaks_tg_ntg(epochs_tg, epochs_ntg, subj=None):
@@ -93,8 +94,9 @@ def dash_peaks_tg_ntg(epochs_tg, epochs_ntg, subj=None):
 
 
 def main():
-    from preprocessing.data_processing_iterative import AltFilters
-
+    """
+    Do dashboard for all sessions at once for a subject.
+    """
     dataset=BI2013a()
     for subj in dataset.subject_list[6:]:
         epochs = get_clean_epochs(dataset, subjects_list=[subj])
@@ -115,9 +117,30 @@ def main():
 
         dash_peaks_tg_ntg(lag_corrected_epochs_tg, lag_corrected_epochs_ntg, subj=subj)
 
+def main_per_session():
+    """
+    Do dashboard for a single session for a subject.
+    """
+    dataset=BI2013a()
+    subj = 2
+    session = "0"
+    epochs = get_clean_epochs(dataset, subjects_list=[subj])
+    epochs = epochs[epochs.metadata.session.values == session]
+
+    alt_filter = AltFilters(epochs, p=4)
+    filtered_epochs, _ = alt_filter.fit_and_apply(class_="Target", plot_it=False)
+    #Average filtered and lag-corrected target FRMS 
+    lagger = Lagger(filtered_epochs["Target"])
+    lag_corrected_epochs_tg = lagger.compute_and_correct_lags()
+
+    #Average filtered and lag-corrected non-target FRMS 
+    lagger = Lagger(filtered_epochs["NonTarget"])
+    lag_corrected_epochs_ntg = lagger.compute_and_correct_lags()
+    dash_peaks_tg_ntg(lag_corrected_epochs_tg, lag_corrected_epochs_ntg, subj="Subj {}, Session {}".format(subj,session))
 
 if __name__ == "__main__":
    # stuff only to run when not called via 'import' here
-   main()
+   #main()
+   main_per_session()
 
 # %%

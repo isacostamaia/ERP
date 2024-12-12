@@ -256,7 +256,7 @@ class FRMS:
         return fig
 
 
-    def peaks_idx(self, subtract_frms=None, t_interval = 70, thr_per = 0.25, plot = True, smooth = False):
+    def peaks_idx(self, subtract_frms=None, t_interval = 70, thr_per = 0.25, show = False, smooth = False):
 
         """
         Get peaks idx of mean FRMS 
@@ -288,18 +288,20 @@ class FRMS:
         
         times = np.array([int(e) for e in self.frms_df.columns])
         fig = None
-        if plot:
-            fig = plt.figure(figsize=(12,3))
-            plt.plot(times, mean_frms, label="filtered mean FRMS")
-            if smooth:
-                plt.plot(times, mean_frms, linestyle = "dashed", color = "b", label="smoothed filtered mean FRMS")
-            plt.scatter(times[max_idx], mean_frms[max_idx], color = "b", label="local max of (smoothed) filtered mean FRMS ")
-            plt.scatter(times[valid_idx], mean_frms[valid_idx], color = "g", label = "local max >= {} max of (smoothed) filtered mean FRMS".format(thr_per))
-            plt.xlabel("ms")
-            plt.ylabel("V")
-            plt.legend()
-            plt.title(title)
-            plt.close(fig)
+        
+        fig = plt.figure(figsize=(12,3))
+        plt.plot(times, mean_frms, label="filtered mean FRMS")
+        if smooth:
+            plt.plot(times, mean_frms, linestyle = "dashed", color = "b", label="smoothed filtered mean FRMS")
+        plt.scatter(times[max_idx], mean_frms[max_idx], color = "b", label="local max of (smoothed) filtered mean FRMS ")
+        plt.scatter(times[valid_idx], mean_frms[valid_idx], color = "g", label = "local max >= {} max of (smoothed) filtered mean FRMS".format(thr_per))
+        plt.xlabel("ms")
+        plt.ylabel("V")
+        plt.legend()
+        plt.title(title)
+        if show:
+            plt.show()
+        plt.close(fig)
         return valid_idx, fig
 
 
